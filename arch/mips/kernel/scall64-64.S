@@ -427,4 +427,5 @@ EXPORT(sys_call_table)
 	PTR	sys_getdents64
 	PTR	sys_sched_setattr
 	PTR	sys_sched_getattr		/* 5310 */
+	PTR	sys_sched_enablepreempt
 	.size	sys_call_table,.-sys_call_table

@@ -3694,6 +3694,30 @@ SYSCALL_DEFINE3(sched_setattr, pid_t, pid, struct sched_attr __user *, uattr,
 }
 
 /**
+ * sys_sched_enablepreempt - enable or disable preemption of corresponding 
+ * userspace process of current.
+ * @enable: non-zero, enable; zero, disable
+ * 
+ * Return: the previous value of current->userspace_preempt_lock_count
+ */
+SYSCALL_DEFINE1(sched_enablepreempt, int, enable)
+{
+	int oldvalue;
+
+	rcu_read_lock();
+	preempt_disable();
+	oldvalue = current->userspace_preempt_lock_count;
+	current->userspace_preempt_lock_count += (enable ? -1 : 1);
+	if (oldvalue != 0 && current->userspace_preempt_lock_count == 0) {
+		set_tsk_need_resched(current);
+	}
+	preempt_enable();
+	rcu_read_unlock();
+
+	return oldvalue;
+}
+
+/**
  * sys_sched_getscheduler - get the policy (scheduling class) of a thread
  * @pid: the pid in question.
  *

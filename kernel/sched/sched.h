@@ -439,6 +439,14 @@ struct rt_rq {
 	struct rq *rq;
 	struct task_group *tg;
 #endif
+	/* Added Sunxi @May 17, 2014
+	 * when rt_se containing the rt_rq was preempted by an other task with higher priority,
+	 * and current->userspace_preempt_lock_count > 0, the task is also put in preemption_disabled.
+	 * when the rt_se is scheduled next time, we will check preemption_disabled first.
+	 * if it is not NULL, we will schedule the task in preemption_disabled 
+	 * in stead of the one with the highest priority.
+	 */
+	struct task_struct *preemption_disabled;
 };
 
 /* Deadline class' related fields in a runqueue */

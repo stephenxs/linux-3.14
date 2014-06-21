@@ -371,16 +371,17 @@
 #define __NR_finit_module		(__NR_Linux + 348)
 #define __NR_sched_setattr		(__NR_Linux + 349)
 #define __NR_sched_getattr		(__NR_Linux + 350)
+#define __NR_sched_enablepreempt	(__NR_Linux + 351)
 
 /*
  * Offset of the last Linux o32 flavoured syscall
  */
-#define __NR_Linux_syscalls		350
+#define __NR_Linux_syscalls		351
 
 #endif /* _MIPS_SIM == _MIPS_SIM_ABI32 */
 
 #define __NR_O32_Linux			4000
-#define __NR_O32_Linux_syscalls		350
+#define __NR_O32_Linux_syscalls		351
 
 #if _MIPS_SIM == _MIPS_SIM_ABI64
 

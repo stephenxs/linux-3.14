@@ -1317,7 +1317,7 @@ static struct sched_rt_entity *pick_next_rt_entity(struct rq *rq,
 static struct task_struct *_pick_next_task_rt(struct rq *rq)
 {
 	struct sched_rt_entity *rt_se;
-	struct task_struct *p;
+	struct task_struct *p, *curr;
 	struct rt_rq *rt_rq;
 
 	rt_rq = &rq->rt;
@@ -1335,6 +1335,21 @@ static struct task_struct *_pick_next_task_rt(struct rq *rq)
 	} while (rt_rq);
 
 	p = rt_task_of(rt_se);
+
+	/*
+	 * add Sunxi @May 17,2014, for userspace process preemption disable
+	 * is there any preemption-disabled task within the same rt_rq ?
+	 * check p->rt.rt_rq->preemption_disabled first.
+	 * see comment of preemption_disabled for more details.
+	 */
+	curr = p->rt.rt_rq->preemption_disabled;
+	if (curr) {
+		p->rt.rt_rq->preemption_disabled = NULL;
+		BUG_ON(p->sched_task_group != curr->sched_task_group);
+		p = curr;
+	}
+	/*end add*/
+
 	p->se.exec_start = rq_clock_task(rq);
 
 	return p;
@@ -1362,6 +1377,13 @@ static struct task_struct *pick_next_task_rt(struct rq *rq)
 static void put_prev_task_rt(struct rq *rq, struct task_struct *p)
 {
 	update_curr_rt(rq);
+
+	/*
+	 * if p is still ready, save it to preemption_disabled.
+	 * see the comment of preemption_disabled for more details.
+	 */
+	if (!p->state && p->userspace_preempt_lock_count > 0)
+		p->rt.rt_rq->preemption_disabled = p;
 
 	/*
 	 * The previous task needs to be made eligible for pushing

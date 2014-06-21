@@ -173,6 +173,9 @@ static inline void task_state(struct seq_file *m, struct pid_namespace *ns,
 	cred = get_task_cred(p);
 	seq_printf(m,
 		"State:\t%s\n"
+		"Priority:\t%d/%d/%d\n"
+		"Rt priority:\t%d\n"
+		"us preemption:\t%d\n"
 		"Tgid:\t%d\n"
 		"Ngid:\t%d\n"
 		"Pid:\t%d\n"
@@ -181,6 +184,9 @@ static inline void task_state(struct seq_file *m, struct pid_namespace *ns,
 		"Uid:\t%d\t%d\t%d\t%d\n"
 		"Gid:\t%d\t%d\t%d\t%d\n",
 		get_task_state(p),
+		p->prio, p->static_prio, p->normal_prio,
+		p->rt_priority,
+		p->userspace_preempt_lock_count,
 		task_tgid_nr_ns(p, ns),
 		task_numa_group_id(p),
 		pid_nr_ns(pid, ns),
