@@ -734,6 +734,9 @@ static int do_sched_rt_period_timer(struct rt_bandwidth *rt_b, int overrun)
 {
 	int i, idle = 1, throttled = 0;
 	const struct cpumask *span;
+	int root_rt_group = 0;
+	struct task_group *tg = container_of(rt_b, struct task_group, rt_bandwidth);
+	unsigned long flags;
 
 	span = sched_rt_period_mask();
 #ifdef CONFIG_RT_GROUP_SCHED
@@ -746,8 +749,10 @@ static int do_sched_rt_period_timer(struct rt_bandwidth *rt_b, int overrun)
 	 * off to kill the perturbations it causes anyway.  Meanwhile,
 	 * this maintains functionality for boot and/or troubleshooting.
 	 */
-	if (rt_b == &root_task_group.rt_bandwidth)
+	if (rt_b == &root_task_group.rt_bandwidth) {
 		span = cpu_online_mask;
+		root_rt_group = 1;
+	}
 #endif
 	for_each_cpu(i, span) {
 		int enqueue = 0;
@@ -755,6 +760,27 @@ static int do_sched_rt_period_timer(struct rt_bandwidth *rt_b, int overrun)
 		struct rq *rq = rq_of_rt_rq(rt_rq);
 
 		raw_spin_lock(&rq->lock);
+#ifdef CONFIG_RT_GROUP_SCHED
+		if (root_rt_group && rt_rq->rt_time < rt_rq->rt_runtime + rt_rq->rt_runtime_borrow) {
+			raw_local_irq_save(flags);
+			if (rt_rq->rt_runtime + rt_rq->rt_runtime_borrow - rt_rq->rt_time <= 0xffffffff)
+				rt_group_gain = (long)(rt_rq->rt_runtime + rt_rq->rt_runtime_borrow - rt_rq->rt_time);
+			else
+				rt_group_gain = 0xffffffff;
+			raw_local_irq_restore(flags);
+		}
+		/*
+		  if taskgroup containing rt_rq is leaf and rt_rq->rt_time < rt_rq->rt_runtime
+		  we should pick "rt_rq->rt_runtime - rt_rq->rt_time" out from rt_group_gain
+		*/
+		if (list_empty(&tg->children)
+				&& rt_rq->rt_time < rt_rq->rt_runtime
+				&& rt_rq->rt_nr_running) {
+			raw_local_irq_save(flags);
+			rt_group_gain -= (long)(rt_rq->rt_runtime - rt_rq->rt_time);
+			raw_local_irq_restore(flags);			
+		}
+#endif
 		if (rt_rq->rt_time) {
 			u64 runtime;
 
@@ -762,6 +788,8 @@ static int do_sched_rt_period_timer(struct rt_bandwidth *rt_b, int overrun)
 			if (rt_rq->rt_throttled)
 				balance_runtime(rt_rq);
 			runtime = rt_rq->rt_runtime;
+			rt_rq->rt_time -= rt_rq->rt_runtime_borrow;
+			rt_rq->rt_runtime_borrow = 0;
 			rt_rq->rt_time -= min(rt_rq->rt_time, overrun*runtime);
 			if (rt_rq->rt_throttled && rt_rq->rt_time < runtime) {
 				rt_rq->rt_throttled = 0;
@@ -782,6 +810,7 @@ static int do_sched_rt_period_timer(struct rt_bandwidth *rt_b, int overrun)
 			if (!rt_rq_throttled(rt_rq))
 				enqueue = 1;
 		}
+
 		if (rt_rq->rt_throttled)
 			throttled = 1;
 
@@ -808,7 +837,7 @@ static inline int rt_se_prio(struct sched_rt_entity *rt_se)
 	return rt_task_of(rt_se)->prio;
 }
 
-static int sched_rt_runtime_exceeded(struct rt_rq *rt_rq)
+static int sched_rt_runtime_exceeded(struct rt_rq *rt_rq, u64 *pborrowed)
 {
 	u64 runtime = sched_rt_runtime(rt_rq);
 
@@ -833,7 +862,30 @@ static int sched_rt_runtime_exceeded(struct rt_rq *rt_rq)
 		if (likely(rt_b->rt_runtime)) {
 			static bool once = false;
 
-			rt_rq->rt_throttled = 1;
+			if (rt_rq->rt_time > runtime + rt_rq->rt_runtime_borrow) {
+#ifdef CONFIG_RT_GROUP_SCHED
+				long need_borrow = (long)(rt_rq->rt_time - (runtime + rt_rq->rt_runtime_borrow));
+				long borrowed;
+				unsigned long flags;
+
+				raw_local_irq_save(flags);
+
+				borrowed = min(need_borrow, rt_group_gain);
+				if (borrowed <= 0) {
+					borrowed = 0;
+					rt_rq->rt_throttled = 1;
+				} else {
+					rt_rq->rt_runtime_borrow += borrowed;
+					rt_group_gain -= borrowed;
+					if (pborrowed)
+						*pborrowed = borrowed;
+				}
+
+				raw_local_irq_restore(flags);
+#else
+				rt_rq->rt_throttled = 1;
+#endif
+			}
 
 			if (!once) {
 				once = true;
@@ -866,7 +918,7 @@ static void update_curr_rt(struct rq *rq)
 	struct task_struct *curr = rq->curr;
 	struct sched_rt_entity *rt_se = &curr->rt;
 	struct rt_rq *rt_rq = rt_rq_of_se(rt_se);
-	u64 delta_exec;
+	u64 delta_exec, children_borrowed;
 
 	if (curr->sched_class != &rt_sched_class)
 		return;
@@ -889,13 +941,16 @@ static void update_curr_rt(struct rq *rq)
 	if (!rt_bandwidth_enabled())
 		return;
 
+	children_borrowed = 0;
 	for_each_sched_rt_entity(rt_se) {
 		rt_rq = rt_rq_of_se(rt_se);
 
 		if (sched_rt_runtime(rt_rq) != RUNTIME_INF) {
 			raw_spin_lock(&rt_rq->rt_runtime_lock);
 			rt_rq->rt_time += delta_exec;
-			if (sched_rt_runtime_exceeded(rt_rq))
+			rt_rq->rt_runtime_borrow += children_borrowed;
+			children_borrowed = 0;
+			if (sched_rt_runtime_exceeded(rt_rq, &children_borrowed))
 				resched_task(curr);
 			raw_spin_unlock(&rt_rq->rt_runtime_lock);
 		}

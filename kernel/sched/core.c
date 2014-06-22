@@ -6776,6 +6776,9 @@ int in_sched_functions(unsigned long addr)
  */
 struct task_group root_task_group;
 LIST_HEAD(task_groups);
+#ifdef CONFIG_RT_GROUP_SCHED
+long rt_group_gain;
+#endif
 #endif
 
 DECLARE_PER_CPU(cpumask_var_t, load_balance_mask);

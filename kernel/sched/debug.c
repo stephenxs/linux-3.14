@@ -260,6 +260,7 @@ void print_rt_rq(struct seq_file *m, int cpu, struct rt_rq *rt_rq)
 	P(rt_throttled);
 	PN(rt_time);
 	PN(rt_runtime);
+	PN(rt_runtime_borrow);
 
 #undef PN
 #undef P

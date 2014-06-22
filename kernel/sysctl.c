@@ -418,6 +418,13 @@ static struct ctl_table kern_table[] = {
 		.proc_handler	= sched_rt_handler,
 	},
 	{
+		.procname	= "sched_rt_cgroup_gain_us",
+		.data		= &rt_group_gain,
+		.maxlen		= sizeof(int),
+		.mode		= 0444,
+		.proc_handler	= proc_dointvec,
+	},
+	{
 		.procname	= "sched_rr_timeslice_ms",
 		.data		= &sched_rr_timeslice,
 		.maxlen		= sizeof(int),

@@ -430,6 +430,7 @@ struct rt_rq {
 	int rt_throttled;
 	u64 rt_time;
 	u64 rt_runtime;
+	u64 rt_runtime_borrow;
 	/* Nests inside the rq lock: */
 	raw_spinlock_t rt_runtime_lock;
 

@@ -2856,6 +2856,9 @@ extern long sched_getaffinity(pid_t pid, struct cpumask *mask);
 
 #ifdef CONFIG_CGROUP_SCHED
 extern struct task_group root_task_group;
+#ifdef CONFIG_RT_GROUP_SCHED
+extern long rt_group_gain; 
+#endif
 #endif /* CONFIG_CGROUP_SCHED */
 
 extern int task_can_switch_user(struct user_struct *up,
