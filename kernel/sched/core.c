@@ -3707,7 +3707,7 @@ SYSCALL_DEFINE1(sched_enablepreempt, int, enable)
 	rcu_read_lock();
 	preempt_disable();
 	oldvalue = current->userspace_preempt_lock_count;
-	current->userspace_preempt_lock_count += (enable ? -1 : 1);
+	current->userspace_preempt_lock_count += (enable ? -2 : 2);
 	if (oldvalue != 0 && current->userspace_preempt_lock_count == 0) {
 		set_tsk_need_resched(current);
 	}

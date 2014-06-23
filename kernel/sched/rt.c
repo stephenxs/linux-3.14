@@ -1242,6 +1242,10 @@ static void requeue_task_rt(struct rq *rq, struct task_struct *p, int head)
 static void yield_task_rt(struct rq *rq)
 {
 	requeue_task_rt(rq, rq->curr, 0);
+	/*
+	 * for userspace process preemption disable
+	 */
+	current->userspace_preempt_lock_count ++;
 }
 
 #ifdef CONFIG_SMP
@@ -1437,8 +1441,17 @@ static void put_prev_task_rt(struct rq *rq, struct task_struct *p)
 	 * if p is still ready, save it to preemption_disabled.
 	 * see the comment of preemption_disabled for more details.
 	 */
-	if (!p->state && p->userspace_preempt_lock_count > 0)
-		p->rt.rt_rq->preemption_disabled = p;
+	if (!p->state && p->userspace_preempt_lock_count > 0) {
+	/*
+	 * userspace_preempt_lock_count is stepped by 2, an even value means
+	 * the current task is during a yield, we don't save the current to the
+	 * p->rt.rt_rq->preemption_disabled in such case.
+	 */
+		if ((p->userspace_preempt_lock_count & 1) == 0 )
+			p->rt.rt_rq->preemption_disabled = p;
+		else
+			p->userspace_preempt_lock_count--;
+	}
 
 	/*
 	 * The previous task needs to be made eligible for pushing
