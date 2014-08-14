@@ -27,7 +27,7 @@
 #include <asm/ptrace.h>
 #include <asm/highmem.h>		/* For VMALLOC_END */
 #include <linux/kdebug.h>
-
+int handling_page_fault;
 /*
  * This routine handles page faults.  It determines the address,
  * and the problem, and then passes it off to one of the appropriate
@@ -324,6 +324,8 @@ asmlinkage void __kprobes do_page_fault(struct pt_regs *regs,
 	enum ctx_state prev_state;
 
 	prev_state = exception_enter();
+	handling_page_fault++;
 	__do_page_fault(regs, write, address);
+	handling_page_fault--;
 	exception_exit(prev_state);
 }

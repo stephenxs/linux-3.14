@@ -1435,6 +1435,7 @@ static struct task_struct *pick_next_task_rt(struct rq *rq)
 
 static void put_prev_task_rt(struct rq *rq, struct task_struct *p)
 {
+	extern int handling_page_fault;
 	update_curr_rt(rq);
 
 	/*
@@ -1451,6 +1452,9 @@ static void put_prev_task_rt(struct rq *rq, struct task_struct *p)
 			p->rt.rt_rq->preemption_disabled = p;
 		else
 			p->userspace_preempt_lock_count--;
+	} else if (handling_page_fault && p->userspace_preempt_lock_count > 0) {
+		printk("task %x pended during page fault handling...\n", p);
+		show_stack(p, NULL);
 	}
 
 	/*
