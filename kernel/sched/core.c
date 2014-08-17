@@ -7387,6 +7387,23 @@ static long sched_group_rt_runtime(struct task_group *tg)
 	return rt_runtime_us;
 }
 
+static long sched_group_rt_runtime_borrow(struct task_group *tg)
+{
+	u64 rt_runtime_borrow_us = 0;
+	int i;
+
+	for_each_possible_cpu(i) {
+		struct rt_rq *rt_rq = tg->rt_rq[i];
+
+		raw_spin_lock(&rt_rq->rt_runtime_lock);
+		rt_runtime_borrow_us += rt_rq->rt_runtime_borrow;
+		raw_spin_unlock(&rt_rq->rt_runtime_lock);
+	}
+
+	do_div(rt_runtime_borrow_us, NSEC_PER_USEC);
+	return rt_runtime_borrow_us;
+}
+
 static int sched_group_set_rt_period(struct task_group *tg, long rt_period_us)
 {
 	u64 rt_runtime, rt_period;
@@ -7945,6 +7962,12 @@ static s64 cpu_rt_runtime_read(struct cgroup_subsys_state *css,
 	return sched_group_rt_runtime(css_tg(css));
 }
 
+static s64 cpu_rt_runtime_borrow_read(struct cgroup_subsys_state *css,
+			       struct cftype *cft)
+{
+	return sched_group_rt_runtime_borrow(css_tg(css));
+}
+
 static int cpu_rt_period_write_uint(struct cgroup_subsys_state *css,
 				    struct cftype *cftype, u64 rt_period_us)
 {
@@ -7992,6 +8015,10 @@ static struct cftype cpu_files[] = {
 		.name = "rt_period_us",
 		.read_u64 = cpu_rt_period_read_uint,
 		.write_u64 = cpu_rt_period_write_uint,
+	},
+	{
+		.name = "rt_runtime_borrow_us",
+		.read_s64 = cpu_rt_runtime_borrow_read,
 	},
 #endif
 	{ }	/* terminate */

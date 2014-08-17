@@ -758,6 +758,7 @@ static int do_sched_rt_period_timer(struct rt_bandwidth *rt_b, int overrun)
 		int enqueue = 0;
 		struct rt_rq *rt_rq = sched_rt_period_rt_rq(rt_b, i);
 		struct rq *rq = rq_of_rt_rq(rt_rq);
+		u64 init_runtime_borrow = 0;
 
 		raw_spin_lock(&rq->lock);
 #ifdef CONFIG_RT_GROUP_SCHED
@@ -777,20 +778,25 @@ static int do_sched_rt_period_timer(struct rt_bandwidth *rt_b, int overrun)
 				&& rt_rq->rt_time < rt_rq->rt_runtime
 				&& rt_rq->rt_nr_running) {
 			raw_local_irq_save(flags);
-			rt_group_gain -= (long)(rt_rq->rt_runtime - rt_rq->rt_time);
-			raw_local_irq_restore(flags);			
+			init_runtime_borrow = (rt_rq->rt_runtime - rt_rq->rt_time);
+			rt_group_gain -= (long)init_runtime_borrow;
+			raw_local_irq_restore(flags);
 		}
 #endif
+		raw_spin_lock(&rt_rq->rt_runtime_lock);
 		if (rt_rq->rt_time) {
 			u64 runtime;
 
-			raw_spin_lock(&rt_rq->rt_runtime_lock);
 			if (rt_rq->rt_throttled)
 				balance_runtime(rt_rq);
 			runtime = rt_rq->rt_runtime;
-			rt_rq->rt_time -= rt_rq->rt_runtime_borrow;
-			rt_rq->rt_runtime_borrow = 0;
-			rt_rq->rt_time -= min(rt_rq->rt_time, overrun*runtime);
+			if (rt_rq->rt_time < rt_rq->rt_runtime_borrow) {
+				printk("error rt_time %llu borrow %llu, we try to survive...\n", rt_rq->rt_time, rt_rq->rt_runtime_borrow);
+				rt_rq->rt_time = 0;
+			} else {
+				rt_rq->rt_time -= rt_rq->rt_runtime_borrow;
+				rt_rq->rt_time -= min(rt_rq->rt_time, overrun*runtime);
+			}
 			if (rt_rq->rt_throttled && rt_rq->rt_time < runtime) {
 				rt_rq->rt_throttled = 0;
 				enqueue = 1;
@@ -804,11 +810,29 @@ static int do_sched_rt_period_timer(struct rt_bandwidth *rt_b, int overrun)
 			}
 			if (rt_rq->rt_time || rt_rq->rt_nr_running)
 				idle = 0;
-			raw_spin_unlock(&rt_rq->rt_runtime_lock);
 		} else if (rt_rq->rt_nr_running) {
 			idle = 0;
 			if (!rt_rq_throttled(rt_rq))
 				enqueue = 1;
+		}
+
+		rt_rq->rt_runtime_borrow = init_runtime_borrow;
+
+		raw_spin_unlock(&rt_rq->rt_runtime_lock);
+
+		if (init_runtime_borrow && tg) {
+			struct sched_rt_entity *rt_se = tg->rt_se[i];
+			struct rt_rq *parent_rt_rq;
+			if (rt_se){
+				rt_se = rt_se->parent;
+				for_each_sched_rt_entity(rt_se) {
+					parent_rt_rq = rt_rq_of_se(rt_se);
+					raw_spin_lock(&parent_rt_rq->rt_runtime_lock);
+					if (parent_rt_rq)
+						parent_rt_rq->rt_runtime_borrow += init_runtime_borrow;
+					raw_spin_unlock(&parent_rt_rq->rt_runtime_lock);
+				}
+			}
 		}
 
 		if (rt_rq->rt_throttled)
