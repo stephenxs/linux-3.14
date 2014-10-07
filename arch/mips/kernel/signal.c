@@ -587,6 +587,10 @@ asmlinkage void do_notify_resume(struct pt_regs *regs, void *unused,
 		tracehook_notify_resume(regs);
 	}
 
+	/*_TIF_PASSIVE_ENTER means the current thread enter kernel passive*/
+	if (thread_info_flags & _TIF_PASSIVE_ENTER)
+		rt_task_exit_kernel_passive(current);
+
 	user_enter();
 }
 

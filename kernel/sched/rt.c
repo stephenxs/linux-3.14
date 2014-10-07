@@ -141,6 +141,8 @@ void init_tg_rt_entry(struct task_group *tg, struct rt_rq *rt_rq,
 	rt_rq->rq = rq;
 	rt_rq->tg = tg;
 
+	init_completion(&rt_rq->wait_passive);
+
 	tg->rt_rq[cpu] = rt_rq;
 	tg->rt_se[cpu] = rt_se;
 
@@ -1380,6 +1382,50 @@ static void check_preempt_curr_rt(struct rq *rq, struct task_struct *p, int flag
 #endif
 }
 
+void rt_task_enter_kernel_passive(struct task_struct *task)
+{
+	if (rt_task(task) && task->userspace_preempt_lock_count > 0)
+		task_uspreemption_flag_set(current, USERSPACE_PREEMPT_PASSIVE_ENT_KER);
+}
+
+/*sunxi @Oct 2, 2014
+  1.processes be block on wait_passive before return to userspace when there was an 
+    preemption-disabled process scheduled out.
+  2.preemption-disabled process wake up all therads block on wait_passive before its
+    returning to userspace
+ */
+void rt_task_exit_kernel_passive(struct task_struct *task)
+{
+	if (!rt_task(task))
+		return;
+
+	if (task_uspreemption_flag_isset(task,
+				 USERSPACE_PREEMPT_PROHIBIT_TO_USERSPACE)) {
+		//block the current process on the queue
+		if (NULL != task->rt.rt_rq->passive_thread)
+			wait_for_completion(&task->rt.rt_rq->wait_passive);
+
+		trace_printk("[PEK %p] return to userspace after waiting completion %p complete\n",
+			     task, &task->rt.rt_rq->wait_passive);
+
+		task_uspreemption_flag_clear(task, USERSPACE_PREEMPT_PROHIBIT_TO_USERSPACE);
+	} else if (task_uspreemption_flag_isset(task,
+				 USERSPACE_PREEMPT_PASSIVE_ENT_KER)){
+		trace_printk("[PEK %p] passive task return to userspace, wake all tasks waiting on %p\n",
+			     task, &task->rt.rt_rq->wait_passive);
+
+	  	//wake up all threads block on task
+		complete_all(&task->rt.rt_rq->wait_passive);
+
+		trace_printk("[PEK %p] wake all finish\n", task);
+
+		task_uspreemption_flag_clear(current, USERSPACE_PREEMPT_PASSIVE_ENT_KER
+					     |USERSPACE_PREEMPT_COMPLETION_INITED);
+	}
+
+	clear_thread_flag(TIF_PASSIVE_ENTER);
+}
+
 static struct sched_rt_entity *pick_next_rt_entity(struct rq *rq,
 						   struct rt_rq *rt_rq)
 {
@@ -1400,7 +1446,7 @@ static struct sched_rt_entity *pick_next_rt_entity(struct rq *rq,
 static struct task_struct *_pick_next_task_rt(struct rq *rq)
 {
 	struct sched_rt_entity *rt_se;
-	struct task_struct *p, *curr;
+	struct task_struct *p, *curr = NULL;
 	struct rt_rq *rt_rq;
 
 	rt_rq = &rq->rt;
@@ -1419,19 +1465,38 @@ static struct task_struct *_pick_next_task_rt(struct rq *rq)
 
 	p = rt_task_of(rt_se);
 
-	/*
-	 * add Sunxi @May 17,2014, for userspace process preemption disable
-	 * is there any preemption-disabled task within the same rt_rq ?
-	 * check p->rt.rt_rq->preemption_disabled first.
-	 * see comment of preemption_disabled for more details.
-	 */
-	curr = p->rt.rt_rq->preemption_disabled;
-	if (curr) {
-		p->rt.rt_rq->preemption_disabled = NULL;
-		BUG_ON(p->sched_task_group != curr->sched_task_group);
-		p = curr;
-	}
+	if (NULL != p->rt.rt_rq->passive_thread) {
+		curr = p->rt.rt_rq->passive_thread;
+		if (!curr->state) {
+			trace_printk("[PEK %p] passive thread is ready, original %p\n",
+				     curr, p);
+			p->rt.rt_rq->passive_thread = NULL;
+			//we will choice passive_thread if it is ready.@Oct 2, 2014
+			if (curr != p)
+				p = curr;
+		}
+		else {
+			task_uspreemption_flag_set(p,
+					USERSPACE_PREEMPT_PROHIBIT_TO_USERSPACE);
+			set_tsk_thread_flag(p, TIF_PASSIVE_ENTER);
+			trace_printk("[PEK %p] set prohibit to us\n", p);
+		}
+	} else {
+		curr = p->rt.rt_rq->preemption_disabled;
+
+		/*
+		 * add Sunxi @May 17,2014, for userspace process preemption disable
+		 * is there any preemption-disabled task within the same rt_rq ?
+		 * check p->rt.rt_rq->preemption_disabled first.
+		 * see comment of preemption_disabled for more details.
+		 */
+		if (curr) {
+			p->rt.rt_rq->preemption_disabled = NULL;
+			BUG_ON(p->sched_task_group != curr->sched_task_group);
+			p = curr;
+		}
 	/*end add*/
+	}
 
 	p->se.exec_start = rq_clock_task(rq);
 
@@ -1459,27 +1524,45 @@ static struct task_struct *pick_next_task_rt(struct rq *rq)
 
 static void put_prev_task_rt(struct rq *rq, struct task_struct *p)
 {
-	extern int handling_page_fault;
 	update_curr_rt(rq);
 
 	/*
 	 * if p is still ready, save it to preemption_disabled.
 	 * see the comment of preemption_disabled for more details.
 	 */
-	if (!p->state && p->userspace_preempt_lock_count > 0) {
+	if (p->userspace_preempt_lock_count > 0) {
 	/*
 	 * userspace_preempt_lock_count is stepped by 2, an even value means
 	 * the current task is during a yield, we don't save the current to the
 	 * p->rt.rt_rq->preemption_disabled in such case.
 	 */
-		if ((p->userspace_preempt_lock_count & 1) == 0 )
-			p->rt.rt_rq->preemption_disabled = p;
-		else
-			p->userspace_preempt_lock_count--;
-	} else if (handling_page_fault && p->userspace_preempt_lock_count > 0) {
-		printk("task %x pended during page fault handling...\n", p);
-		show_stack(p, NULL);
+		if (!p->state) { //still ready
+			if ((p->userspace_preempt_lock_count & 1) == 0 )
+				p->rt.rt_rq->preemption_disabled = p;
+			else
+				p->userspace_preempt_lock_count--;
+		} else if (task_uspreemption_flag_isset(p, USERSPACE_PREEMPT_PASSIVE_ENT_KER)) {
+			trace_printk("[PEK %p] pended %08x during passive enter kernel\n", 
+				     p, (unsigned int)p->state);
+			if (p->rt.rt_rq->passive_thread == NULL) {
+				/*preemption disabled process scheduled out.*/
+				p->rt.rt_rq->passive_thread = p;
+				if (!task_uspreemption_flag_isset(p, 
+							USERSPACE_PREEMPT_COMPLETION_INITED)) {
+					reinit_completion(&p->rt.rt_rq->wait_passive);
+					task_uspreemption_flag_set(p,
+							USERSPACE_PREEMPT_COMPLETION_INITED);
+					set_tsk_thread_flag(p, TIF_PASSIVE_ENTER);
+					trace_printk("[PEK %p] init_completion %p\n", 
+						     p, &p->rt.rt_rq->wait_passive);
+				}
+			} else
+				BUG_ON(p->rt.rt_rq->passive_thread != p);
+		}
 	}
+
+	if (task_uspreemption_flag_isset(p, USERSPACE_PREEMPT_PROHIBIT_TO_USERSPACE))
+		task_uspreemption_flag_clear(p, USERSPACE_PREEMPT_PROHIBIT_TO_USERSPACE);
 
 	/*
 	 * The previous task needs to be made eligible for pushing

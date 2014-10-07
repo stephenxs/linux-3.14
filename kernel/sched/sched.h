@@ -448,6 +448,13 @@ struct rt_rq {
 	 * in stead of the one with the highest priority.
 	 */
 	struct task_struct *preemption_disabled;
+	/*Added Sunxi @Oct 2, 2014
+	  passive_thread: record which process enter kernel passive in the rt rq
+	  wait_passive: other process of the same rt rq will pended on wait_passive
+	  		until passive_thread is ready.
+	*/
+	struct task_struct *passive_thread;
+	struct completion wait_passive;
 };
 
 /* Deadline class' related fields in a runqueue */

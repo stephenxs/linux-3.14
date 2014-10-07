@@ -1170,6 +1170,18 @@ struct task_struct {
 
 	/*add Sunxi @May 17,2014, for userspace process preemption*/
 	int userspace_preempt_lock_count;/*preempt count of corresponding userspace process*/
+	unsigned int userspace_preempt_flag;
+	/*end add*/
+	/*add Sunxi @Oct 2,2014, for userspace process preemption,
+	  especially when a preemption-disabled process enter the kernel mode passively, ie. cause an exception.*/
+	/*the following flags are used by userspace_preempt_flag, defined here temporary*/
+#define USERSPACE_PREEMPT_PASSIVE_ENT_KER		0x00000001
+#define USERSPACE_PREEMPT_PROHIBIT_TO_USERSPACE		0x00000002
+#define USERSPACE_PREEMPT_COMPLETION_INITED		0x00000004
+	/*when a preemption-disabled process enter the kernel mode passive scheduled out,
+	  all other process in the same cgroup can't return to the userspace and
+	  be blocked on wait_for_ret_us_list*/
+	struct list_head wait_for_ret_us_list;
 	/*end add*/
 
 #ifdef CONFIG_SMP
@@ -1618,6 +1630,24 @@ static inline void task_numa_free(struct task_struct *p)
 {
 }
 #endif
+/*for userspace preemption lock*/
+static inline void task_uspreemption_flag_set(struct task_struct *task, unsigned int flag)
+{
+	task->userspace_preempt_flag |= flag;
+}
+
+static inline void task_uspreemption_flag_clear(struct task_struct *task, unsigned int flag)
+{
+	task->userspace_preempt_flag &= ~flag;
+}
+
+static inline int task_uspreemption_flag_isset(struct task_struct *task, unsigned flag)
+{
+	return (task->userspace_preempt_flag & flag);
+}
+
+void rt_task_enter_kernel_passive(struct task_struct *task);
+void rt_task_exit_kernel_passive(struct task_struct *task);
 
 static inline struct pid *task_pid(struct task_struct *task)
 {
