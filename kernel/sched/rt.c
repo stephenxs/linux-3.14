@@ -737,7 +737,9 @@ static int do_sched_rt_period_timer(struct rt_bandwidth *rt_b, int overrun)
 	int i, idle = 1, throttled = 0;
 	const struct cpumask *span;
 	int root_rt_group = 0;
+#ifdef CONFIG_RT_GROUP_SCHED
 	struct task_group *tg = container_of(rt_b, struct task_group, rt_bandwidth);
+#endif
 	unsigned long flags;
 
 	span = sched_rt_period_mask();
@@ -778,13 +780,14 @@ static int do_sched_rt_period_timer(struct rt_bandwidth *rt_b, int overrun)
 		*/
 		if (list_empty(&tg->children)
 				&& rt_rq->rt_time < rt_rq->rt_runtime
-				&& rt_rq->rt_nr_running) {
+				&& rt_rq->rt_nr_running
+				&& rt_rq->rt_throttled) {
 			raw_local_irq_save(flags);
 			init_runtime_borrow = (rt_rq->rt_runtime - rt_rq->rt_time);
 			rt_group_gain -= (long)init_runtime_borrow;
 			raw_local_irq_restore(flags);
 		}
-#endif
+
 		raw_spin_lock(&rt_rq->rt_runtime_lock);
 		if (rt_rq->rt_time) {
 			u64 runtime;
@@ -792,12 +795,14 @@ static int do_sched_rt_period_timer(struct rt_bandwidth *rt_b, int overrun)
 			if (rt_rq->rt_throttled)
 				balance_runtime(rt_rq);
 			runtime = rt_rq->rt_runtime;
-			if (rt_rq->rt_time < rt_rq->rt_runtime_borrow) {
+			if (rt_rq->rt_time + rt_rq->rt_runtime_extra < rt_rq->rt_runtime_borrow) {
 				printk("error rt_time %llu borrow %llu, we try to survive...\n", rt_rq->rt_time, rt_rq->rt_runtime_borrow);
 				rt_rq->rt_time = 0;
 			} else {
-				rt_rq->rt_time -= rt_rq->rt_runtime_borrow;
+				rt_rq->rt_time -= rt_rq->rt_runtime_borrow - rt_rq->rt_runtime_extra;
 				rt_rq->rt_time -= min(rt_rq->rt_time, overrun*runtime);
+				if (rt_rq->rt_time > 0 && rt_rq->rt_runtime_extra > 0)
+					rt_rq->rt_time -= min(rt_rq->rt_time, rt_rq->rt_runtime_extra);
 			}
 			if (rt_rq->rt_throttled && rt_rq->rt_time < runtime) {
 				rt_rq->rt_throttled = 0;
@@ -818,6 +823,7 @@ static int do_sched_rt_period_timer(struct rt_bandwidth *rt_b, int overrun)
 				enqueue = 1;
 		}
 
+		rt_rq->rt_runtime_extra = init_runtime_borrow;
 		rt_rq->rt_runtime_borrow = init_runtime_borrow;
 
 		raw_spin_unlock(&rt_rq->rt_runtime_lock);
@@ -836,7 +842,7 @@ static int do_sched_rt_period_timer(struct rt_bandwidth *rt_b, int overrun)
 				}
 			}
 		}
-
+#endif
 		if (rt_rq->rt_throttled)
 			throttled = 1;
 
@@ -1399,6 +1405,7 @@ void rt_task_exit_kernel_passive(struct task_struct *task)
 	if (!rt_task(task))
 		return;
 
+#ifdef CONFIG_RT_GROUP_SCHED
 	if (task_uspreemption_flag_isset(task,
 				 USERSPACE_PREEMPT_PROHIBIT_TO_USERSPACE)) {
 		//block the current process on the queue
@@ -1422,7 +1429,7 @@ void rt_task_exit_kernel_passive(struct task_struct *task)
 		task_uspreemption_flag_clear(current, USERSPACE_PREEMPT_PASSIVE_ENT_KER
 					     |USERSPACE_PREEMPT_COMPLETION_INITED);
 	}
-
+#endif
 	clear_thread_flag(TIF_PASSIVE_ENTER);
 }
 
@@ -1465,6 +1472,7 @@ static struct task_struct *_pick_next_task_rt(struct rq *rq)
 
 	p = rt_task_of(rt_se);
 
+#ifdef CONFIG_RT_GROUP_SCHED
 	if (NULL != p->rt.rt_rq->passive_thread) {
 		curr = p->rt.rt_rq->passive_thread;
 		if (!curr->state) {
@@ -1497,6 +1505,7 @@ static struct task_struct *_pick_next_task_rt(struct rq *rq)
 		}
 	/*end add*/
 	}
+#endif
 
 	p->se.exec_start = rq_clock_task(rq);
 
@@ -1526,6 +1535,7 @@ static void put_prev_task_rt(struct rq *rq, struct task_struct *p)
 {
 	update_curr_rt(rq);
 
+#ifdef CONFIG_RT_GROUP_SCHED
 	/*
 	 * if p is still ready, save it to preemption_disabled.
 	 * see the comment of preemption_disabled for more details.
@@ -1563,6 +1573,7 @@ static void put_prev_task_rt(struct rq *rq, struct task_struct *p)
 
 	if (task_uspreemption_flag_isset(p, USERSPACE_PREEMPT_PROHIBIT_TO_USERSPACE))
 		task_uspreemption_flag_clear(p, USERSPACE_PREEMPT_PROHIBIT_TO_USERSPACE);
+#endif
 
 	/*
 	 * The previous task needs to be made eligible for pushing

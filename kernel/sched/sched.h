@@ -431,6 +431,7 @@ struct rt_rq {
 	u64 rt_time;
 	u64 rt_runtime;
 	u64 rt_runtime_borrow;
+	u64 rt_runtime_extra;
 	/* Nests inside the rq lock: */
 	raw_spinlock_t rt_runtime_lock;
 
