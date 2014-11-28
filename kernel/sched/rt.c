@@ -1501,7 +1501,16 @@ static struct task_struct *_pick_next_task_rt(struct rq *rq)
 		if (curr) {
 			p->rt.rt_rq->preemption_disabled = NULL;
 			BUG_ON(p->sched_task_group != curr->sched_task_group);
-			p = curr;
+			/*
+			 * the current->state may changed after we saved current
+			 * to preemption_disabled, when preemption_disabled loaded
+			 * it is not in the TASK_RUNNING state, scheduled it in
+			 * will cause an error.
+			 * so we need to check the state when it loaded.
+			 * mr.sunxi@gmail.com, Nov 28,2014.
+			 */
+			if (!curr->state)
+				p = curr;
 		}
 	/*end add*/
 	}
